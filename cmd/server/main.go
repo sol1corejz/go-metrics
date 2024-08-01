@@ -20,50 +20,46 @@ func (ms *MemStorage) AddCounter(name string, value int64) {
 	ms.counter[name] += value
 }
 
-func mainPage(storage *MemStorage) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		fmt.Fprint(w, "Сервис сбора метрик и алертинга\n")
-
-		fmt.Fprint(w, "\ngauge:\n", storage.gauge)
-		fmt.Fprint(w, "\n\ncounter:\n", storage.counter)
-	}
-}
-
 func updatePage(storage *MemStorage) http.HandlerFunc {
-	return func(res http.ResponseWriter, req *http.Request) {
-		if req.Method != http.MethodPost {
-			res.Write([]byte(http.StatusText(http.StatusMethodNotAllowed)))
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
 
-		path := strings.TrimPrefix(req.URL.Path, "/update/")
+		path := strings.TrimPrefix(r.URL.Path, "/update/")
 		parts := strings.Split(path, "/")
 
-		metricType := parts[0]
-		metricName := parts[1]
-		metricValue := parts[2]
+		if len(parts) != 3 {
+			http.Error(w, "invalid request", http.StatusNotFound)
+			return
+		}
+
+		metricType, metricName, metricValue := parts[0], parts[1], parts[2]
 
 		switch metricType {
 		case "gauge":
-			if val, err := strconv.ParseFloat(metricValue, 64); err == nil {
-				storage.SetGauge(metricName, val)
-			} else {
-				res.Write([]byte(http.StatusText(http.StatusBadRequest)))
+			val, err := strconv.ParseFloat(metricValue, 64)
+			if err != nil {
+				http.Error(w, "invalid gauge", http.StatusBadRequest)
+				return
 			}
-			break
+			storage.SetGauge(metricName, val)
+
 		case "counter":
-			if val, err := strconv.ParseInt(metricValue, 0, 64); err == nil {
-				storage.AddCounter(metricName, val)
-			} else {
-				res.Write([]byte(http.StatusText(http.StatusBadRequest)))
+			val, err := strconv.ParseInt(metricValue, 10, 64)
+			if err != nil {
+				http.Error(w, "invalid counter", http.StatusBadRequest)
 			}
-			break
+			storage.AddCounter(metricName, val)
+			return
 		default:
-			res.Write([]byte(http.StatusText(http.StatusBadRequest)))
+			http.Error(w, "invalid metric type", http.StatusBadRequest)
 			return
 		}
 
-		res.Write([]byte(http.StatusText(http.StatusOK)))
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprintln(w, "OK")
 	}
 }
 
@@ -73,7 +69,6 @@ func main() {
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/update/", updatePage(ms))
-	mux.HandleFunc("/", mainPage(ms))
 
 	err := http.ListenAndServe(":8080", mux)
 	if err != nil {
